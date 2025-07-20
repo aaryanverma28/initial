@@ -10,13 +10,13 @@
 #     print(val)
 
 
-# str = "verma enterprises"
+str = "verma enterprises"
 
-# for char in str:
-#     if (char == 's'):
-#         print("s found")
-#         break
-#     print(char)
-# else:
-#     print("END")
+for char in str:
+    if (char == 's'):
+        print("s found")
+        break
+    print(char)
+else:
+    print("END")
 
