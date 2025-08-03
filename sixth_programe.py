@@ -1,3 +1,4 @@
+# function defination
 def calc_sum(a, b): #paraameters
    return a + b
 
@@ -9,6 +10,7 @@ def print_hello():
 
 print_hello()
 
+# average of 3 numbers
 def calc_avg(a, b, c):
     sum = a + b + c
     avg = sum / 3
