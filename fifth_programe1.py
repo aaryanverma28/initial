@@ -1,3 +1,5 @@
+# for loops
+
 nums = [1, 2, 3, 4, 5]
 
 for val in nums:
@@ -33,3 +35,11 @@ for i in range(2,10): #range(start, stop)
 
 for i in range(1, 100 , 2): #range(start, stop, step)
     print(i)
+
+for i in range(5):
+    pass
+
+if i > 5:
+    pass
+
+print("some hard work")
