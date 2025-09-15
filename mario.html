@@ -1,102 +1,253 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mini Mario Game</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Super Mario — Tiny HTML5 Platformer</title>
   <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-      background: #5c94fc;
-      display: flex;
-      justify-content: center;
-    }
-    #game {
-      position: relative;
-      width: 800px;
-      height: 400px;
-      background: linear-gradient(#5c94fc, #8ec8ff);
-      border: 5px solid #333;
-      overflow: hidden;
-    }
-    .ground {
-      position: absolute;
-      bottom: 0;
-      width: 100%;
-      height: 50px;
-      background: #654321;
-    }
-    .mario {
-      position: absolute;
-      bottom: 50px;
-      left: 50px;
-      width: 40px;
-      height: 50px;
-      background: url('https://i.imgur.com/lrEY1kM.png') no-repeat center/contain;
-      background-size: cover;
-    }
-    .block {
-      position: absolute;
-      bottom: 100px;
-      width: 50px;
-      height: 50px;
-      background: url('https://i.imgur.com/3WykbZ0.png') no-repeat center/contain;
-      background-size: cover;
-    }
+    /* Basic page */
+    html,body{height:100%;margin:0;background:linear-gradient(#87CEEB, #6FC1FF);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
+    .wrap{display:flex;align-items:center;justify-content:center;height:100%}
+    canvas{background:transparent;box-shadow:0 8px 24px rgba(0,0,0,0.2);border-radius:8px}
+
+    /* HUD */
+    .hud{position:fixed;left:16px;top:16px;color:#fff;text-shadow:0 2px 6px rgba(0,0,0,0.5);font-weight:700}
+    .controls{position:fixed;right:16px;top:16px;color:#fff;text-shadow:0 2px 6px rgba(0,0,0,0.5)}
+
+    /* Small responsive adjustments */
+    @media (max-width:600px){canvas{width:360px;height:200px}}
   </style>
 </head>
 <body>
-  <div id="game">
-    <div class="ground"></div>
-    <div class="mario" id="mario"></div>
-    <div class="block" style="left: 300px;"></div>
-    <div class="block" style="left: 360px;"></div>
-    <div class="block" style="left: 600px;"></div>
+  <div class="wrap">
+    <canvas id="game" width="800" height="450"></canvas>
   </div>
+  <div class="hud">Score: <span id="score">0</span> &nbsp; Lives: <span id="lives">3</span></div>
+  <div class="controls">Controls: ← → to move · ↑ / Space to jump</div>
 
   <script>
-    const mario = document.getElementById("mario");
-    let velocityY = 0;
-    let gravity = 0.8;
-    let jumping = false;
-    let marioBottom = 50;
-    let marioLeft = 50;
+  // Tiny platformer engine (single-file) — Vanilla JS
+  // Controls: ArrowLeft/ArrowRight or A/D, Jump: ArrowUp / Space
 
-    function jump() {
-      if (!jumping) {
-        velocityY = -12;
-        jumping = true;
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
+
+  const WIDTH = canvas.width, HEIGHT = canvas.height;
+  const GRAVITY = 1200; // px/s^2
+
+  // Simple tiles (w: wall/platform, c: coin, e: enemy, .: empty)
+  const tileSize = 40;
+  // Level map (rows top to bottom). Keep width * tileSize == WIDTH ideally
+  const level = [
+    '................................................................',
+    '................................................................',
+    '................................................................',
+    '......................c.........................................',
+    '...........wwwwwwwwwwwwww..........ww.................c.........',
+    '..............................................wwwwwwwwwwwwww....',
+    '......c.....................e...................................',
+    'wwwwww......wwwwww.................wwwwww......wwwwwwwwwwwwwwwww',
+    '................................................................',
+    'wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww'
+  ];
+
+  // Game objects
+  const player = {
+    x: 60, y: HEIGHT - tileSize*3, w: 28, h: 36,
+    vx: 0, vy: 0, onGround: false,
+    speed: 240, jump: 520
+  };
+
+  let keys = {};
+  let score = 0; let lives = 3;
+
+  // Build collision rects and coins/enemies from map
+  const platforms = [];
+  const coins = [];
+  const enemies = [];
+
+  for (let r = 0; r < level.length; r++){
+    for (let c = 0; c < level[r].length; c++){
+      const ch = level[r][c];
+      const x = c * tileSize;
+      const y = r * tileSize;
+      if (ch === 'w') platforms.push({x,y,w:tileSize,h:tileSize});
+      if (ch === 'c') coins.push({x: x + tileSize/2, y: y + tileSize/2, r:8, taken:false});
+      if (ch === 'e') enemies.push({x:x, y:y + 4, w:32, h:32, vx:60});
+    }
+  }
+
+  // Input
+  window.addEventListener('keydown', e => { keys[e.key] = true; if(['ArrowUp',' '].includes(e.key)) e.preventDefault(); });
+  window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+  function rectsOverlap(a,b){return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.h + a.y > b.y}
+
+  // Physics loop
+  let last = performance.now();
+  function step(now){
+    const dt = Math.min(0.033, (now - last) / 1000); // clamp dt
+    last = now;
+
+    // Horizontal input
+    let move = 0;
+    if (keys['ArrowLeft'] || keys['a'] || keys['A']) move -= 1;
+    if (keys['ArrowRight'] || keys['d'] || keys['D']) move += 1;
+
+    player.vx = move * player.speed;
+
+    // Jump
+    if ((keys['ArrowUp'] || keys[' ']) && player.onGround){ player.vy = -player.jump; player.onGround = false; }
+
+    // Apply gravity
+    player.vy += GRAVITY * dt;
+
+    // Integrate
+    player.x += player.vx * dt;
+    // horizontal collision with platforms
+    for (let p of platforms){
+      const a = {x:player.x, y:player.y, w:player.w, h:player.h};
+      if (rectsOverlap(a,p)){
+        if (player.vx > 0) player.x = p.x - player.w - 0.01;
+        else if (player.vx < 0) player.x = p.x + p.w + 0.01;
       }
     }
 
-    function gameLoop() {
-      velocityY += gravity;
-      marioBottom += velocityY;
-
-      if (marioBottom <= 50) {
-        marioBottom = 50;
-        velocityY = 0;
-        jumping = false;
+    player.y += player.vy * dt;
+    player.onGround = false;
+    for (let p of platforms){
+      const a = {x:player.x, y:player.y, w:player.w, h:player.h};
+      if (rectsOverlap(a,p)){
+        // were we falling?
+        if (player.vy > 0){
+          player.y = p.y - player.h; player.vy = 0; player.onGround = true;
+        } else if (player.vy < 0){
+          player.y = p.y + p.h; player.vy = 0;
+        }
       }
-
-      mario.style.bottom = marioBottom + "px";
-      mario.style.left = marioLeft + "px";
-
-      requestAnimationFrame(gameLoop);
     }
 
-    window.addEventListener("keydown", (e) => {
-      if (e.key === " ") {
-        jump();
-      } else if (e.key === "ArrowRight") {
-        marioLeft += 10;
-      } else if (e.key === "ArrowLeft") {   
-        marioLeft -= 10;
-      }
-    });
+    // Keep player inside world horizontally
+    player.x = Math.max(0, Math.min(player.x, level[0].length * tileSize - player.w));
 
-    gameLoop();
+    // Coins pickup
+    for (let coin of coins){
+      if (coin.taken) continue;
+      const dx = (player.x + player.w/2) - coin.x;
+      const dy = (player.y + player.h/2) - coin.y;
+      if (dx*dx + dy*dy < (coin.r+8)*(coin.r+8)){
+        coin.taken = true; score += 100; scoreEl.textContent = score;
+      }
+    }
+
+    // Enemies behavior
+    for (let en of enemies){
+      en.x += en.vx * dt;
+      // reverse when hitting wall or edges
+      let collided = false;
+      for (let p of platforms){
+        if (rectsOverlap({x:en.x,y:en.y,w:en.w,h:en.h}, p)){
+          collided = true; break;
+        }
+      }
+      if (collided) en.vx *= -1;
+      // enemy-player collision
+      if (rectsOverlap({x:en.x,y:en.y,w:en.w,h:en.h}, {x:player.x,y:player.y,w:player.w,h:player.h})){
+        // If player falling and hits top of enemy -> stomp
+        if (player.vy > 0){
+          // stomp
+          score += 200; scoreEl.textContent = score; en.dead = true; player.vy = -player.jump*0.4; player.onGround=false;
+        } else {
+          // lose life and reset
+          lives -= 1; livesEl.textContent = lives; resetPlayer();
+          if (lives <= 0) { alert('Game Over — Score: '+score); resetGame(); }
+        }
+      }
+    }
+    // remove dead enemies
+    for (let i = enemies.length-1; i >= 0; i--) if (enemies[i].dead) enemies.splice(i,1);
+
+    // Simple camera: follow player (only horizontally)
+    const camX = Math.max(0, Math.min(player.x + player.w/2 - WIDTH/2, level[0].length*tileSize - WIDTH));
+
+    // Render
+    draw(camX);
+
+    requestAnimationFrame(step);
+  }
+
+  function draw(camX){
+    // clear
+    ctx.clearRect(0,0,WIDTH,HEIGHT);
+
+    // draw sky gradient (soft)
+    const g = ctx.createLinearGradient(0,0,0,HEIGHT);
+    g.addColorStop(0,'#9BD1FF'); g.addColorStop(1,'#6FC1FF');
+    ctx.fillStyle = g; ctx.fillRect(0,0,WIDTH,HEIGHT);
+
+    ctx.save(); ctx.translate(-camX,0);
+
+    // draw platforms
+    for (let p of platforms){
+      ctx.fillStyle = '#8B4513';
+      ctx.fillRect(p.x, p.y, p.w, p.h);
+      // top highlight
+      ctx.fillStyle = '#C68642'; ctx.fillRect(p.x, p.y, p.w, 6);
+    }
+
+    // draw coins
+    for (let coin of coins){
+      if (coin.taken) continue;
+      ctx.beginPath(); ctx.arc(coin.x, coin.y, coin.r, 0, Math.PI*2);
+      ctx.fillStyle = 'gold'; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = '#c88a00'; ctx.stroke();
+    }
+
+    // draw enemies
+    for (let en of enemies){
+      ctx.fillStyle = '#a33'; ctx.fillRect(en.x, en.y, en.w, en.h);
+      // eyes
+      ctx.fillStyle = '#fff'; ctx.fillRect(en.x + 6, en.y + 6, 6, 6); ctx.fillRect(en.x + en.w - 14, en.y + 6, 6, 6);
+      ctx.fillStyle = '#000'; ctx.fillRect(en.x + 8, en.y + 8, 2, 2); ctx.fillRect(en.x + en.w - 12, en.y + 8, 2, 2);
+    }
+
+    // draw player (simple Mario-like sprite)
+    ctx.save();
+    const px = player.x, py = player.y;
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(px+player.w/2, py+player.h+6, player.w/2, 6, 0, 0, Math.PI*2); ctx.fill();
+    // body
+    ctx.fillStyle = '#d23'; ctx.fillRect(px, py+8, player.w, player.h-8); // shirt
+    // head
+    ctx.fillStyle = '#f6d3b6'; ctx.fillRect(px+6, py, 16, 16);
+    // hat
+    ctx.fillStyle = '#b1122a'; ctx.fillRect(px+4, py-6, 20, 8);
+    // legs
+    ctx.fillStyle = '#642'; ctx.fillRect(px+4, py+player.h-6, 10, 6); ctx.fillRect(px+player.w-14, py+player.h-6, 10, 6);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  function resetPlayer(){ player.x = 60; player.y = HEIGHT - tileSize*3; player.vx = 0; player.vy = 0; }
+  function resetGame(){ score = 0; lives = 3; scoreEl.textContent = score; livesEl.textContent = lives; resetPlayer();
+    // restore coins & enemies
+    for (let c of coins) c.taken = false;
+    enemies.length = 0; // rebuild
+    for (let r = 0; r < level.length; r++){
+      for (let c = 0; c < level[r].length; c++){
+        if (level[r][c] === 'e') enemies.push({x:c*tileSize, y:r*tileSize+4, w:32, h:32, vx:60});
+      }
+    }
+  }
+
+  // init enemies from map
+  resetGame();
+
+  // start loop
+  requestAnimationFrame(step);
   </script>
 </body>
 </html>
